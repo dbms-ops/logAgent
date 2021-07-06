@@ -1,6 +1,7 @@
 package taillog
 
 import (
+	"context"
 	"fmt"
 	"github.com/hpcloud/tail"
 	"logAgent/src/kafka"
@@ -12,12 +13,18 @@ type TailTask struct {
 	path     string
 	topic    string
 	instance *tail.Tail
+	// 为了能够实现退出 t.run()
+	ctx        context.Context
+	cancelFunc context.CancelFunc
 }
 
 func NewTailTask(path, topic string) (tailObj *TailTask) {
+	ctx, cancel := context.WithCancel(context.Background())
 	tailObj = &TailTask{
-		path:  path,
-		topic: topic,
+		path:       path,
+		topic:      topic,
+		ctx:        ctx,
+		cancelFunc: cancel,
 	}
 	tailObj.init() // 根据路径打开对应的日志信息
 
@@ -38,10 +45,11 @@ func (t *TailTask) init() {
 	t.instance, err = tail.TailFile(t.path, config)
 	if err != nil {
 		fmt.Println("tail file failed, err\n", err)
-		return
+
 	}
+	// 当 goroutine 执行的函数退出的时候 goroutine 结束
 	go t.run()
-	return
+
 }
 
 func (t *TailTask) ReadChan() <-chan *tail.Line {
@@ -52,6 +60,9 @@ func (t *TailTask) ReadChan() <-chan *tail.Line {
 func (t *TailTask) run() {
 	for {
 		select {
+		case <-t.ctx.Done():
+			fmt.Printf("tail task finished, %s_%s", t.path, t.topic)
+			return
 		// 先将日志发送到一个通道中
 		// kafka 那个包中有单独的goroutine 去日志数据发送到 kafka 中
 		case line := <-t.instance.Lines: // 从 tailObj 通道中一行一行读取数据
@@ -60,3 +71,6 @@ func (t *TailTask) run() {
 	}
 
 }
+
+// etcd watch 如何实现的
+// 1、etcd 底层是如何实现的watch 给客户端发送通知[websocket]
